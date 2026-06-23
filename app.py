@@ -1,6 +1,100 @@
 import streamlit as st
 import requests
+import json
+import os
 from ollama import Client
+
+# ─────────────────────────────────────────────
+#  Helper Functions for Gemini Integration
+# ─────────────────────────────────────────────
+def stream_gemini(api_key, model_name, messages, temperature):
+    """
+    Streams response from Gemini API using requests and a custom bracket-matching JSON parser.
+    """
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:streamGenerateContent?key={api_key}"
+    headers = {"Content-Type": "application/json"}
+    
+    # Map roles from Streamlit/Ollama ("user", "assistant") to Gemini ("user", "model")
+    contents = []
+    for msg in messages:
+        role = "user" if msg["role"] == "user" else "model"
+        contents.append({
+            "role": role,
+            "parts": [{"text": msg["content"]}]
+        })
+        
+    payload = {
+        "contents": contents,
+        "generationConfig": {
+            "temperature": temperature
+        }
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=payload, stream=True, timeout=10.0)
+        if response.status_code != 200:
+            yield f"Error: Gemini API returned status code {response.status_code}. Detail: {response.text}"
+            return
+            
+        buffer = ""
+        for chunk in response.iter_content(chunk_size=1024, decode_unicode=True):
+            if chunk:
+                buffer += chunk
+                while True:
+                    buffer = buffer.strip()
+                    if buffer.startswith('['):
+                        buffer = buffer[1:].strip()
+                    elif buffer.startswith(','):
+                        buffer = buffer[1:].strip()
+                    elif buffer.startswith(']'):
+                        buffer = buffer[1:].strip()
+                        break
+                        
+                    if not buffer:
+                        break
+                        
+                    try:
+                        bracket_count = 0
+                        in_string = False
+                        escape = False
+                        end_idx = -1
+                        for idx, char in enumerate(buffer):
+                            if escape:
+                                escape = False
+                                continue
+                            if char == '\\':
+                                escape = True
+                                continue
+                            if char == '"':
+                                in_string = not in_string
+                                continue
+                            if not in_string:
+                                if char == '{':
+                                    bracket_count += 1
+                                elif char == '}':
+                                    bracket_count -= 1
+                                    if bracket_count == 0:
+                                        end_idx = idx
+                                        break
+                                        
+                        if end_idx != -1:
+                            obj_str = buffer[:end_idx + 1]
+                            buffer = buffer[end_idx + 1:].strip()
+                            obj = json.loads(obj_str)
+                            
+                            candidates = obj.get("candidates", [])
+                            if candidates:
+                                content = candidates[0].get("content", {})
+                                parts = content.get("parts", [])
+                                if parts:
+                                    text = parts[0].get("text", "")
+                                    yield text
+                        else:
+                            break
+                    except Exception:
+                        break
+    except Exception as e:
+        yield f"Connection Error: Failed to communicate with Gemini API. {str(e)}"
 
 # ─────────────────────────────────────────────
 #  Page Configuration
@@ -145,9 +239,16 @@ if "last_response" not in st.session_state:
     st.session_state.last_response = ""
 if "ollama_host_config" not in st.session_state:
     st.session_state.ollama_host_config = "http://127.0.0.1:11434"
+if "backend_type" not in st.session_state:
+    st.session_state.backend_type = "Cloud Gemini API"
+
+# Retrieve default Gemini API key from environment/secrets
+default_gemini_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY") or ""
+if "gemini_api_key" not in st.session_state:
+    st.session_state.gemini_api_key = default_gemini_key
 
 # ─────────────────────────────────────────────
-#  Ollama Connection
+#  Ollama Connection Check (Only run if Ollama backend is selected)
 # ─────────────────────────────────────────────
 OLLAMA_HOST = st.session_state.ollama_host_config.strip()
 client = Client(host=OLLAMA_HOST)
@@ -155,14 +256,14 @@ client = Client(host=OLLAMA_HOST)
 is_connected = False
 available_models = []
 
-try:
-    # Use standard HTTP request with short timeout to prevent UI freeze
-    r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=1.5)
-    if r.status_code == 200:
-        is_connected = True
-        available_models = [m['name'] for m in r.json().get('models', [])]
-except Exception:
-    is_connected = False
+if st.session_state.backend_type == "Local Ollama":
+    try:
+        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=1.5)
+        if r.status_code == 200:
+            is_connected = True
+            available_models = [m['name'] for m in r.json().get('models', [])]
+    except Exception:
+        is_connected = False
 
 # ─────────────────────────────────────────────
 #  SIDEBAR — Author Title + History Panel + Reset
@@ -200,33 +301,64 @@ with st.sidebar:
     # Connection Status & Configuration
     st.markdown("**Connection & Backend Config**")
     
-    # Text input to dynamically modify host URL (supports localhost or public tunnel/ngrok URLs)
-    new_host = st.text_input(
-        "Ollama Host URL:",
-        key="ollama_host_config",
-        placeholder="e.g. http://127.0.0.1:11434"
+    # Backend Type Selector
+    backend_type = st.selectbox(
+        "Select Backend:",
+        options=["Cloud Gemini API", "Local Ollama"],
+        key="backend_type"
     )
     
-    if is_connected:
-        st.markdown('<span class="status-connected">Connected</span>', unsafe_allow_html=True)
-        st.caption(f"Connected to backend: `{OLLAMA_HOST}`")
-    else:
-        st.markdown('<span class="status-disconnected">Disconnected</span>', unsafe_allow_html=True)
-        st.warning("Cannot communicate with the LLM backend. Please make sure Ollama server is running locally on port 11434.")
-        st.info("**Streamlit Cloud Note:** If you are running this app on Streamlit Cloud, you must expose your local Ollama port (11434) using a tunnel (e.g. `ngrok http 11434`) and paste the ngrok URL above.")
+    if backend_type == "Local Ollama":
+        # Text input to dynamically modify host URL
+        new_host = st.text_input(
+            "Ollama Host URL:",
+            key="ollama_host_config",
+            placeholder="e.g. http://127.0.0.1:11434"
+        )
         
-        if st.button("Retry Connection", use_container_width=True):
-            st.rerun()
-
-    # Model Settings
-    if is_connected and available_models:
+        if is_connected:
+            st.markdown('<span class="status-connected">Connected</span>', unsafe_allow_html=True)
+            st.caption(f"Connected to backend: `{OLLAMA_HOST}`")
+        else:
+            st.markdown('<span class="status-disconnected">Disconnected</span>', unsafe_allow_html=True)
+            st.warning("Cannot communicate with the LLM backend. Please make sure Ollama server is running locally on port 11434.")
+            st.info("**Streamlit Cloud Note:** If you are running this app on Streamlit Cloud, you must expose your local Ollama port (11434) using a tunnel (e.g. `ngrok http 11434`) and paste the ngrok URL above.")
+            
+            if st.button("Retry Connection", use_container_width=True):
+                st.rerun()
+                
+        # Model Settings
         st.divider()
         st.markdown("**Settings**")
-        selected_model = st.selectbox("Select Model", options=available_models, index=0)
+        if is_connected and available_models:
+            selected_model = st.selectbox("Select Model", options=available_models, index=0)
+        else:
+            selected_model = st.selectbox("Select Model", options=["qwen2.5:0.5b"], index=0)
         temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.05)
-    else:
-        selected_model = "qwen2.5:0.5b"
-        temperature = 0.7
+        
+    else:  # Cloud Gemini API
+        gemini_key_input = st.text_input(
+            "Gemini API Key:",
+            type="password",
+            key="gemini_api_key",
+            placeholder="AIzaSy..."
+        )
+        
+        if gemini_key_input:
+            st.markdown('<span class="status-connected">Key Provided</span>', unsafe_allow_html=True)
+        else:
+            st.markdown('<span class="status-disconnected">Key Missing</span>', unsafe_allow_html=True)
+            st.info("Get a free Gemini API Key from Google AI Studio and paste it above, or set it as a `GEMINI_API_KEY` secret in your Streamlit Cloud dashboard.")
+            
+        # Model Settings
+        st.divider()
+        st.markdown("**Settings**")
+        selected_gemini_model = st.selectbox(
+            "Select Model",
+            options=["gemini-1.5-flash", "gemini-1.5-pro"],
+            index=0
+        )
+        temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.05)
 
 # ─────────────────────────────────────────────
 #  MAIN AREA
@@ -238,7 +370,7 @@ st.divider()
 # ─────────────────────────────────────────────
 #  TEXT INPUT BOX (User Query)
 # ─────────────────────────────────────────────
-st.markdown("### Text Input Box")
+st.markdown("### [ASK ME ]")
 
 # Form to hold the text area and send button
 with st.form(key="chat_form", clear_on_submit=True):
@@ -284,50 +416,88 @@ st.divider()
 #  API Connection and Message Processing
 # ─────────────────────────────────────────────
 if submitted and user_query.strip():
-    if not is_connected:
-        st.error("Cannot communicate with the LLM backend. Please make sure Ollama server is running locally on port 11434.")
-    else:
-        # Add user query to conversation history
-        st.session_state.messages.append({"role": "user", "content": user_query.strip()})
+    if backend_type == "Local Ollama":
+        if not is_connected:
+            st.error("Cannot communicate with the LLM backend. Please make sure Ollama server is running locally on port 11434.")
+        else:
+            # Add user query to conversation history
+            st.session_state.messages.append({"role": "user", "content": user_query.strip()})
 
-        # Build context from previous messages
-        api_messages = [{"role": "system", "content": "You are a helpful, friendly, and concise AI assistant."}]
-        for msg in st.session_state.messages:
-            api_messages.append({"role": msg["role"], "content": msg["content"]})
+            # Build context from previous messages
+            api_messages = [{"role": "system", "content": "You are a helpful, friendly, and concise AI assistant."}]
+            for msg in st.session_state.messages:
+                api_messages.append({"role": msg["role"], "content": msg["content"]})
 
-        # Stream the response from backend
-        full_response = ""
-        try:
-            with st.spinner("LLM is thinking..."):
-                stream = client.chat(
-                    model=selected_model,
-                    messages=api_messages,
-                    options={"temperature": temperature},
-                    stream=True
-                )
-                for chunk in stream:
-                    token = chunk.get("message", {}).get("content", "")
-                    full_response += token
-                    response_placeholder.markdown(
-                        f'<div class="response-box">{full_response}|</div>',
-                        unsafe_allow_html=True
+            # Stream the response from backend
+            full_response = ""
+            try:
+                with st.spinner("LLM is thinking..."):
+                    stream = client.chat(
+                        model=selected_model,
+                        messages=api_messages,
+                        options={"temperature": temperature},
+                        stream=True
                     )
-            
-            # Final output formatting
-            response_placeholder.markdown(
-                f'<div class="response-box">{full_response}</div>',
-                unsafe_allow_html=True
-            )
-            
-            # Save assistant response
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-            st.session_state.last_response = full_response
-            
-            # Rerun to update history in sidebar
-            st.rerun()
+                    for chunk in stream:
+                        token = chunk.get("message", {}).get("content", "")
+                        full_response += token
+                        response_placeholder.markdown(
+                            f'<div class="response-box">{full_response}|</div>',
+                            unsafe_allow_html=True
+                        )
+                
+                # Final output formatting
+                response_placeholder.markdown(
+                    f'<div class="response-box">{full_response}</div>',
+                    unsafe_allow_html=True
+                )
+                
+                # Save assistant response
+                st.session_state.messages.append({"role": "assistant", "content": full_response})
+                st.session_state.last_response = full_response
+                st.rerun()
 
-        except Exception as e:
-            st.error(f"Error communicating with LLM backend: {e}")
+            except Exception as e:
+                st.error(f"Error communicating with LLM backend: {e}")
+
+    else:  # Cloud Gemini API
+        if not st.session_state.gemini_api_key.strip():
+            st.error("Please enter a valid Gemini API Key in the sidebar to send queries.")
+        else:
+            # Add user query to conversation history
+            st.session_state.messages.append({"role": "user", "content": user_query.strip()})
+
+            # Stream the response from Gemini
+            full_response = ""
+            try:
+                with st.spinner("Gemini is thinking..."):
+                    stream = stream_gemini(
+                        api_key=st.session_state.gemini_api_key.strip(),
+                        model_name=selected_gemini_model,
+                        messages=st.session_state.messages,
+                        temperature=temperature
+                    )
+                    for token in stream:
+                        full_response += token
+                        response_placeholder.markdown(
+                            f'<div class="response-box">{full_response}|</div>',
+                            unsafe_allow_html=True
+                        )
+
+                # Final output formatting
+                response_placeholder.markdown(
+                    f'<div class="response-box">{full_response}</div>',
+                    unsafe_allow_html=True
+                )
+
+                # Save assistant response
+                st.session_state.messages.append({"role": "assistant", "content": full_response})
+                st.session_state.last_response = full_response
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"Error communicating with Gemini API: {e}")
+
 
 # ─────────────────────────────────────────────
 #  CONVERSATION HISTORY THREAD (Full back-and-forth)
