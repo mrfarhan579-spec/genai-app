@@ -1,24 +1,22 @@
 import streamlit as st
-import ollama
 from ollama import Client
 
 # ─────────────────────────────────────────────
 #  Page Configuration
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="Local LLM Playground | Ollama",
+    page_title="LLM Chat Interface | Ollama",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # ─────────────────────────────────────────────
-#  Custom Premium CSS Styling
+#  Custom CSS Styling
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
-
     * { font-family: 'Outfit', 'Segoe UI', sans-serif !important; }
 
     .stApp {
@@ -26,17 +24,17 @@ st.markdown("""
         color: #c9d1d9;
     }
 
-    /* Sidebar */
+    /* Sidebar styling */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #161b22 0%, #0d1117 100%);
         border-right: 1px solid #30363d;
     }
 
-    /* Main title glow effect */
+    /* Headings glow */
     h1 { color: #58a6ff !important; text-shadow: 0 0 30px rgba(88,166,255,0.3); }
-    h2, h3 { color: #79c0ff !important; }
+    h2, h3, h4 { color: #79c0ff !important; }
 
-    /* Chat message styling */
+    /* Chat messages */
     [data-testid="stChatMessage"] {
         background: rgba(22, 27, 34, 0.8) !important;
         border: 1px solid #30363d !important;
@@ -46,93 +44,94 @@ st.markdown("""
         backdrop-filter: blur(10px);
     }
 
-    /* Input Text Area Styling */
-    .stTextArea textarea {
+    /* Text input box styling */
+    .stTextInput input {
         background: rgba(22, 27, 34, 0.9) !important;
-        border: 1px solid #388bfd !important;
+        border: 2px solid #388bfd !important;
         border-radius: 10px !important;
         color: #c9d1d9 !important;
-        font-size: 15px !important;
+        font-size: 16px !important;
+        padding: 12px !important;
         transition: border-color 0.3s ease, box-shadow 0.3s ease;
     }
-    .stTextArea textarea:focus {
+    .stTextInput input:focus {
         border-color: #58a6ff !important;
-        box-shadow: 0 0 0 3px rgba(88,166,255,0.15) !important;
+        box-shadow: 0 0 0 3px rgba(88,166,255,0.2) !important;
+    }
+    .stTextInput input::placeholder {
+        color: #6e7681 !important;
     }
 
-    /* Chat input box */
-    [data-testid="stChatInputTextArea"] {
-        background: rgba(22, 27, 34, 0.9) !important;
-        border: 1px solid #388bfd !important;
-        border-radius: 10px !important;
-        color: #c9d1d9 !important;
+    /* Response area styling */
+    .response-area {
+        background: rgba(22, 27, 34, 0.85);
+        border: 1px solid #30363d;
+        border-radius: 12px;
+        padding: 20px;
+        margin: 10px 0;
+        min-height: 100px;
+        color: #c9d1d9;
+        font-size: 15px;
+        line-height: 1.7;
+    }
+    .response-label {
+        color: #58a6ff;
+        font-weight: 600;
+        font-size: 14px;
+        margin-bottom: 8px;
     }
 
     /* Buttons */
     .stButton>button {
         border-radius: 8px;
-        background: linear-gradient(135deg, #238636, #2ea043) !important;
-        color: white !important;
-        border: none !important;
         transition: all 0.3s ease !important;
         font-weight: 500 !important;
     }
     .stButton>button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 4px 15px rgba(46,160,67,0.4) !important;
     }
 
-    /* Reset button */
-    .stButton>button[kind="secondary"] {
-        background: linear-gradient(135deg, #b91c1c, #dc2626) !important;
-    }
-    .stButton>button[kind="secondary"]:hover {
-        box-shadow: 0 4px 15px rgba(220,38,38,0.4) !important;
-    }
-
-    /* Status badges */
-    .status-connected {
+    /* Status badge */
+    .status-badge {
         display: inline-block;
+        padding: 4px 14px;
+        border-radius: 20px;
+        font-size: 13px;
+        font-weight: 500;
+    }
+    .status-connected {
         background: rgba(46,160,67,0.15);
         border: 1px solid #2ea043;
         color: #3fb950;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 13px;
-        font-weight: 500;
     }
     .status-disconnected {
-        display: inline-block;
         background: rgba(218,54,51,0.15);
         border: 1px solid #da3633;
         color: #f85149;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 13px;
-        font-weight: 500;
     }
 
-    /* Info boxes */
-    .info-box {
-        background: rgba(56,139,253,0.1);
-        border: 1px solid #388bfd;
-        border-radius: 10px;
-        padding: 12px 16px;
-        margin: 8px 0;
-        font-size: 14px;
-    }
-
-    /* Metric cards */
-    [data-testid="stMetric"] {
-        background: rgba(22,27,34,0.8);
+    /* History panel */
+    .history-container {
+        background: rgba(22, 27, 34, 0.6);
         border: 1px solid #30363d;
         border-radius: 10px;
-        padding: 10px;
+        padding: 12px;
+        max-height: 400px;
+        overflow-y: auto;
     }
-
-    /* Sliders */
-    [data-testid="stSlider"] > div > div {
-        color: #58a6ff !important;
+    .history-msg {
+        padding: 8px 12px;
+        margin: 4px 0;
+        border-radius: 8px;
+        font-size: 13px;
+    }
+    .history-user {
+        background: rgba(56,139,253,0.1);
+        border-left: 3px solid #388bfd;
+    }
+    .history-assistant {
+        background: rgba(46,160,67,0.1);
+        border-left: 3px solid #2ea043;
     }
 
     /* Scrollbar */
@@ -146,18 +145,10 @@ st.markdown("""
 # ─────────────────────────────────────────────
 #  Session State Initialization
 # ─────────────────────────────────────────────
-WELCOME_MSG = "👋 **Hello!** I am your locally hosted AI assistant powered by **Ollama**. Ask me anything — I'm running entirely on your machine, no internet required!"
-
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": WELCOME_MSG}]
-if "total_queries" not in st.session_state:
-    st.session_state.total_queries = 0
-if "input_mode" not in st.session_state:
-    st.session_state.input_mode = "chat"         # "chat" or "textarea"
-if "textarea_input" not in st.session_state:
-    st.session_state.textarea_input = ""
-if "submit_textarea" not in st.session_state:
-    st.session_state.submit_textarea = False
+    st.session_state.messages = []
+if "last_response" not in st.session_state:
+    st.session_state.last_response = ""
 
 # ─────────────────────────────────────────────
 #  Ollama Client & Connection Check
@@ -176,219 +167,189 @@ except Exception:
     is_connected = False
 
 # ─────────────────────────────────────────────
-#  SIDEBAR
+#  SIDEBAR — Conversation History Panel
 # ─────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 🤖 LLM Console")
-    st.caption("Your local AI command center")
+    st.markdown("## 📜 Conversation History")
+    st.caption("All your queries and AI responses in this session")
     st.divider()
 
-    # Connection Status
-    st.markdown("**Connection Status**")
-    if is_connected:
-        st.markdown('<span class="status-connected">🟢 Connected to Ollama</span>', unsafe_allow_html=True)
-        st.caption(f"Endpoint: `{OLLAMA_HOST}`")
+    # ── Conversation History Panel ──
+    if st.session_state.messages:
+        for i, msg in enumerate(st.session_state.messages):
+            if msg["role"] == "user":
+                st.markdown(
+                    f'<div class="history-msg history-user">🧑 <b>You:</b> {msg["content"][:100]}{"..." if len(msg["content"]) > 100 else ""}</div>',
+                    unsafe_allow_html=True
+                )
+            else:
+                st.markdown(
+                    f'<div class="history-msg history-assistant">🤖 <b>AI:</b> {msg["content"][:100]}{"..." if len(msg["content"]) > 100 else ""}</div>',
+                    unsafe_allow_html=True
+                )
     else:
-        st.markdown('<span class="status-disconnected">🔴 Ollama Offline</span>', unsafe_allow_html=True)
-        st.warning("Start Ollama server and retry.")
+        st.info("No conversation yet. Ask your first question!", icon="💬")
+
+    st.divider()
+
+    # ── Reset Button ──
+    st.markdown("### 🔧 Actions")
+    if st.button("🗑️ Reset Conversation", use_container_width=True, type="primary"):
+        st.session_state.messages = []
+        st.session_state.last_response = ""
+        st.toast("✅ Conversation history cleared!", icon="🧹")
+        st.rerun()
+
+    st.divider()
+
+    # ── Connection Status ──
+    st.markdown("### 🔌 Connection Status")
+    if is_connected:
+        st.markdown(
+            '<span class="status-badge status-connected">🟢 Connected to Ollama</span>',
+            unsafe_allow_html=True
+        )
+        st.caption(f"Endpoint: `{OLLAMA_HOST}`")
+        if available_models:
+            st.caption(f"Models: `{'`, `'.join(available_models)}`")
+    else:
+        st.markdown(
+            '<span class="status-badge status-disconnected">🔴 Ollama Offline</span>',
+            unsafe_allow_html=True
+        )
+        st.warning("Start Ollama server to begin chatting.")
         if st.button("🔄 Retry Connection", use_container_width=True):
             st.rerun()
+
     st.divider()
 
-    # Model Selection
-    st.markdown("**⚙️ Model Settings**")
+    # ── Model Settings ──
     if is_connected and available_models:
+        st.markdown("### ⚙️ Model Settings")
         selected_model = st.selectbox(
-            "Active Model",
+            "Select Model",
             options=available_models,
             index=0,
-            help="Select which locally installed model to chat with."
+            help="Choose which locally hosted model to use."
+        )
+        temperature = st.slider(
+            "Temperature", 0.0, 1.5, 0.7, 0.05,
+            help="Higher = more creative. Lower = more focused."
         )
     else:
         selected_model = "qwen2.5:0.5b"
-        st.info("No models found. Pull a model below.", icon="ℹ️")
-
-    # Parameters
-    temperature = st.slider(
-        "🌡️ Temperature",
-        min_value=0.0, max_value=1.5, value=0.7, step=0.05,
-        help="Higher = more creative. Lower = more focused & precise."
-    )
-    top_p = st.slider(
-        "🎯 Top P",
-        min_value=0.0, max_value=1.0, value=0.9, step=0.05,
-        help="Nucleus sampling threshold. Controls vocabulary diversity."
-    )
-
-    system_prompt = st.text_area(
-        "📋 System Prompt",
-        value="You are a helpful, friendly, and concise AI assistant.",
-        height=100,
-        help="Instructions that define the AI's behavior and personality."
-    )
-
-    # Input Mode Toggle
-    st.divider()
-    st.markdown("**✏️ Input Mode**")
-    input_mode = st.radio(
-        "Choose how to type your query:",
-        options=["💬 Chat Input (Quick)", "📝 Text Box (Multi-line)"],
-        index=0,
-        help="Chat Input is great for quick messages. Text Box is better for long or structured queries."
-    )
-    st.session_state.input_mode = "chat" if "Chat" in input_mode else "textarea"
-
-    # Pull Model
-    st.divider()
-    if is_connected:
-        with st.expander("📥 Download a Model", expanded=False):
-            st.caption("Recommended for 4GB RAM:")
-            st.markdown("- `qwen2.5:0.5b` — Fastest (~350MB)")
-            st.markdown("- `llama3.2:1b` — Smarter (~1.3GB)")
-            model_to_pull = st.text_input("Model identifier", value="qwen2.5:0.5b", key="pull_model_input")
-            if st.button("⬇️ Download Model", use_container_width=True):
-                if model_to_pull.strip():
-                    prog = st.progress(0, text="Connecting…")
-                    try:
-                        for part in client.pull(model=model_to_pull, stream=True):
-                            status = part.get('status', '')
-                            completed = part.get('completed', 0)
-                            total = part.get('total', 1)
-                            pct = min(int((completed / total) * 100), 100) if total > 0 else 0
-                            prog.progress(pct, text=f"{status} — {pct}%")
-                        st.success(f"✅ `{model_to_pull}` downloaded!")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error: {e}")
-                else:
-                    st.warning("Enter a valid model name.")
-
-    # Stats
-    st.divider()
-    st.markdown("**📊 Session Stats**")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Messages", len(st.session_state.messages))
-    with col2:
-        st.metric("Queries", st.session_state.total_queries)
-
-    # Reset Button
-    st.divider()
-    if st.button("🗑️ Reset Conversation", use_container_width=True, type="secondary"):
-        st.session_state.messages = [{"role": "assistant", "content": WELCOME_MSG}]
-        st.session_state.total_queries = 0
-        st.toast("✅ Conversation cleared!", icon="🧹")
-        st.rerun()
+        temperature = 0.7
 
 # ─────────────────────────────────────────────
-#  MAIN CHAT AREA
+#  MAIN AREA
 # ─────────────────────────────────────────────
-# Header
-col_title, col_model = st.columns([3, 1])
-with col_title:
-    st.markdown("# 💬 Local AI Chat Playground")
-    st.caption(f"Powered by **Ollama** • Model: `{selected_model}` • Fully local & private")
-with col_model:
-    if is_connected:
-        st.markdown('<br>', unsafe_allow_html=True)
-        st.markdown(f'<div class="info-box">🔒 <b>100% Local</b><br>No data leaves your machine</div>', unsafe_allow_html=True)
 
+# ── Title ──
+st.markdown("# 🤖 Local LLM Chat Interface")
+st.caption("A simple and interactive Streamlit interface connected to a locally hosted LLM via Ollama")
 st.divider()
 
-# Conversation History Panel
-with st.container():
-    for message in st.session_state.messages:
-        icon = "🤖" if message["role"] == "assistant" else "🧑"
-        with st.chat_message(message["role"], avatar=icon):
-            st.markdown(message["content"])
+if is_connected:
 
-st.divider()
+    # ─────────────────────────────────────────
+    #  TEXT INPUT BOX for User Queries
+    # ─────────────────────────────────────────
+    st.markdown("#### ✏️ Enter Your Query")
+    user_query = st.text_input(
+        label="Type your question below and press Enter",
+        placeholder="Ask me anything... (e.g., What is machine learning?)",
+        key="user_input_box",
+        label_visibility="collapsed"
+    )
+    st.caption("💡 Type your question above and press **Enter** to get a response from the local LLM.")
 
-# ─────────────────────────────────────────────
-#  INPUT SECTION
-# ─────────────────────────────────────────────
-def generate_and_display(user_prompt: str):
-    """Handles sending a message, streaming the response and saving history."""
-    if not user_prompt.strip():
-        return
+    # ─────────────────────────────────────────
+    #  Process Query & Generate Response
+    # ─────────────────────────────────────────
+    if user_query:
+        # Save user message to history
+        st.session_state.messages.append({"role": "user", "content": user_query})
 
-    # Add and show user message
-    st.session_state.messages.append({"role": "user", "content": user_prompt})
-    with st.chat_message("user", avatar="🧑"):
-        st.markdown(user_prompt)
+        # Build message context for API call
+        api_messages = [
+            {"role": "system", "content": "You are a helpful, friendly, and concise AI assistant."}
+        ]
+        for msg in st.session_state.messages:
+            api_messages.append({"role": msg["role"], "content": msg["content"]})
 
-    # Build API context
-    api_messages = []
-    if system_prompt.strip():
-        api_messages.append({"role": "system", "content": system_prompt})
-    for msg in st.session_state.messages:
-        if msg["content"] == WELCOME_MSG:
-            continue
-        api_messages.append({"role": msg["role"], "content": msg["content"]})
+        # ── Response Area ──
+        st.markdown("#### 💬 Model Response")
 
-    # Stream response
-    with st.chat_message("assistant", avatar="🤖"):
-        def response_stream():
-            try:
+        # Stream the response from Ollama API
+        response_placeholder = st.empty()
+        full_response = ""
+
+        try:
+            with st.spinner("🔄 Generating response..."):
                 stream = client.chat(
                     model=selected_model,
                     messages=api_messages,
-                    options={"temperature": temperature, "top_p": top_p},
+                    options={"temperature": temperature},
                     stream=True
                 )
                 for chunk in stream:
-                    yield chunk.get("message", {}).get("content", "")
-            except Exception as err:
-                yield f"\n\n⚠️ **Error:** {err}"
+                    token = chunk.get("message", {}).get("content", "")
+                    full_response += token
+                    # Update the response area in real-time (streaming effect)
+                    response_placeholder.markdown(
+                        f'<div class="response-area">{full_response}▌</div>',
+                        unsafe_allow_html=True
+                    )
 
-        full_response = st.write_stream(response_stream)
+            # Final response without cursor
+            response_placeholder.markdown(
+                f'<div class="response-area">{full_response}</div>',
+                unsafe_allow_html=True
+            )
 
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
-    st.session_state.total_queries += 1
+            # Save assistant response to history
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            st.session_state.last_response = full_response
 
+        except Exception as e:
+            st.error(f"⚠️ Error communicating with Ollama: {e}")
 
-if is_connected:
-    # ── MODE 1: Chat Input (inline, quick) ──────────────────
-    if st.session_state.input_mode == "chat":
-        st.markdown("#### 💬 Quick Chat Input")
-        if prompt := st.chat_input("Type your message and press Enter…", key="chat_input_box"):
-            generate_and_display(prompt)
-            st.rerun()
-
-    # ── MODE 2: Text Box (multi-line, structured) ────────────
-    else:
-        st.markdown("#### 📝 Text Box Input")
-        st.caption("Type your full query below. Supports multi-line input for detailed questions.")
-
-        user_text = st.text_area(
-            label="Your Query",
-            placeholder="Type your question or prompt here...\n\nYou can write multiple lines, paste code, or ask complex questions.",
-            height=160,
-            key="main_text_area",
-            label_visibility="collapsed"
+    # ─────────────────────────────────────────
+    #  Display Previous Response (if no new query)
+    # ─────────────────────────────────────────
+    elif st.session_state.last_response:
+        st.markdown("#### 💬 Last Response")
+        st.markdown(
+            f'<div class="response-area">{st.session_state.last_response}</div>',
+            unsafe_allow_html=True
         )
 
-        btn_col1, btn_col2, _ = st.columns([1, 1, 4])
-        with btn_col1:
-            send_clicked = st.button("🚀 Send Query", use_container_width=True, key="send_btn")
-        with btn_col2:
-            clear_input = st.button("🧹 Clear Input", use_container_width=True, key="clear_input_btn")
-
-        if send_clicked and user_text.strip():
-            generate_and_display(user_text)
-            st.rerun()
-        elif send_clicked and not user_text.strip():
-            st.warning("⚠️ Please enter a query before sending.")
-
-        if clear_input:
-            st.rerun()
+    # ─────────────────────────────────────────
+    #  Full Chat Display Area
+    # ─────────────────────────────────────────
+    if st.session_state.messages:
+        st.divider()
+        st.markdown("#### 📋 Full Conversation")
+        for msg in st.session_state.messages:
+            icon = "🤖" if msg["role"] == "assistant" else "🧑"
+            with st.chat_message(msg["role"], avatar=icon):
+                st.markdown(msg["content"])
 
 else:
+    # ── Offline Message ──
+    st.error("⚠️ Cannot connect to Ollama server.")
     st.markdown("""
-    <div class="info-box">
-    ⚠️ <b>Ollama server is not running.</b><br>
-    Please start the Ollama server using the command below, then click <b>Retry Connection</b> in the sidebar:
-    <br><br>
-    <code>E:\\ollama\\ollama.exe serve</code>
-    </div>
-    """, unsafe_allow_html=True)
+    **Start the Ollama server** by running this command in your terminal:
+
+    ```
+    ollama serve
+    ```
+
+    Then click **Retry Connection** in the sidebar.
+    """)
+
+# ─────────────────────────────────────────────
+#  Footer
+# ─────────────────────────────────────────────
+st.divider()
+st.caption("🔒 100% Local & Private — No data leaves your machine | Built with Streamlit + Ollama")
