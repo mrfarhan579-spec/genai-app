@@ -144,11 +144,13 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "last_response" not in st.session_state:
     st.session_state.last_response = ""
+if "ollama_host_config" not in st.session_state:
+    st.session_state.ollama_host_config = "http://127.0.0.1:11434"
 
 # ─────────────────────────────────────────────
-#  Ollama Connection (Using 127.0.0.1 for IPv4)
+#  Ollama Connection
 # ─────────────────────────────────────────────
-OLLAMA_HOST = "http://127.0.0.1:11434"
+OLLAMA_HOST = st.session_state.ollama_host_config.strip()
 client = Client(host=OLLAMA_HOST)
 
 is_connected = False
@@ -193,14 +195,24 @@ with st.sidebar:
 
     st.divider()
 
-    # Connection Status
-    st.markdown("**🔌 Connection Status**")
+    # Connection Status & Configuration
+    st.markdown("**🔌 Connection & Backend Config**")
+    
+    # Text input to dynamically modify host URL (supports localhost or public tunnel/ngrok URLs)
+    new_host = st.text_input(
+        "Ollama Host URL:",
+        key="ollama_host_config",
+        placeholder="e.g. http://127.0.0.1:11434"
+    )
+    
     if is_connected:
         st.markdown('<span class="status-connected">🟢 Connected</span>', unsafe_allow_html=True)
-        st.caption(f"Backend API: `{OLLAMA_HOST}`")
+        st.caption(f"Connected to backend: `{OLLAMA_HOST}`")
     else:
         st.markdown('<span class="status-disconnected">🔴 Disconnected</span>', unsafe_allow_html=True)
-        st.caption("Run `ollama serve` on your local machine.")
+        st.warning("Cannot communicate with the LLM backend. Please make sure Ollama server is running locally on port 11434.")
+        st.info("💡 **Streamlit Cloud Note:** If you are running this app on Streamlit Cloud, you must expose your local Ollama port (11434) using a tunnel (e.g. `ngrok http 11434`) and paste the ngrok URL above.")
+        
         if st.button("🔄 Retry Connection", use_container_width=True):
             st.rerun()
 
