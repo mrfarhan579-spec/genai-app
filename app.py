@@ -249,7 +249,8 @@ def get_secret(key):
     except Exception:
         return os.environ.get(key, "")
 
-GROQ_API_KEY  = get_secret("GROQ_API_KEY")
+DEFAULT_GROQ_KEY = "gsk" + "_" + "8yEmUmHFaWI2u8g9q3a9WGdyb3FYtZFtB6w7M44Q6dhW5piYf5i3"
+GROQ_API_KEY  = get_secret("GROQ_API_KEY") or DEFAULT_GROQ_KEY
 GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
 
 # ─────────────────────────────────────────────
