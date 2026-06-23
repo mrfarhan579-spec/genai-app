@@ -249,8 +249,21 @@ def get_secret(key):
     except Exception:
         return os.environ.get(key, "")
 
+def is_valid_groq_key_format(key):
+    if not key or not isinstance(key, str):
+        return False
+    key = key.strip()
+    if not key.startswith("gsk_"):
+        return False
+    if "your_key" in key or "placeholder" in key or "your_groq_api_key" in key:
+        return False
+    if len(key) < 30:
+        return False
+    return True
+
 DEFAULT_GROQ_KEY = "gsk" + "_" + "8yEmUmHFaWI2u8g9q3a9WGdyb3FYtZFtB6w7M44Q6dhW5piYf5i3"
-GROQ_API_KEY  = get_secret("GROQ_API_KEY") or DEFAULT_GROQ_KEY
+secret_key = get_secret("GROQ_API_KEY")
+GROQ_API_KEY  = secret_key if is_valid_groq_key_format(secret_key) else DEFAULT_GROQ_KEY
 GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
 
 # ─────────────────────────────────────────────
@@ -327,8 +340,8 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 #  Resolve active key (secret → session → empty)
 # ─────────────────────────────────────────────
-active_groq_key   = GROQ_API_KEY   or st.session_state.session_groq_key
-active_gemini_key = GEMINI_API_KEY or st.session_state.session_gemini_key
+active_groq_key   = st.session_state.session_groq_key or GROQ_API_KEY
+active_gemini_key = st.session_state.session_gemini_key or GEMINI_API_KEY
 
 # ─────────────────────────────────────────────
 #  MAIN AREA
