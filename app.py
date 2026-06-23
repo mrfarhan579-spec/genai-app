@@ -3,89 +3,44 @@ import requests
 import json
 import os
 
-# Safe conditional import for Ollama (not available on Streamlit Cloud)
-try:
-    from ollama import Client as OllamaClient
-    OLLAMA_AVAILABLE = True
-except ImportError:
-    OLLAMA_AVAILABLE = False
-    OllamaClient = None
-
 # ─────────────────────────────────────────────
-#  Helper Functions for Cloud Integrations
+#  Groq API Streaming (Primary - Free & Fast)
 # ─────────────────────────────────────────────
-def get_offline_response(query):
-    query_lower = query.lower()
-    
-    if "code" in query_lower or "python" in query_lower or "html" in query_lower or "program" in query_lower:
-        return (
-            "Here is a sample Python script for your query:\n\n"
-            "```python\n"
-            "def greet(name):\n"
-            "    return f\"Hello, {name}! Welcome to the Offline Mode.\"\n\n"
-            "print(greet(\"Farhan Mustafa\"))\n"
-            "```\n\n"
-            "(Running in offline/local fallback mode because the cloud API is unreachable. Please check your internet connection.)"
-        )
-    elif any(word in query_lower for word in ["hello", "hi", "hey", "greet"]):
-        return (
-            "Hello! I am your AI assistant running in offline fallback mode. "
-            "How can I help you today? (Please note: Internet connection to cloud LLM is currently offline.)"
-        )
-    elif "farhan" in query_lower or "mustafa" in query_lower or "creator" in query_lower:
-        return (
-            "This application was created by FARHAN MUSTAFA. "
-            "It supports both offline simulation, local Ollama backend, and cloud APIs."
-        )
-    elif "streamlit" in query_lower or "github" in query_lower or "cloud" in query_lower:
-        return (
-            "Streamlit is connected directly to your GitHub repository. "
-            "To use full AI features, make sure your Streamlit deployment has internet access and can resolve cloud APIs."
-        )
-    else:
-        return (
-            f"Thank you for your query: \"{query}\".\n\n"
-            "Currently, the cloud LLM backend is unreachable (DNS/Network failed). "
-            "I am running in offline simulation mode to prevent errors. Once internet connectivity is restored, I will connect back to the live LLM!"
-        )
+def stream_groq(api_key, model_name, messages, temperature):
+    """
+    Streams response from Groq's free API (OpenAI-compatible).
+    Groq is free, fast, and reliable — no credit card needed.
+    """
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
 
-def stream_huggingface(model_name, messages, temperature, hf_token=""):
-    """
-    Streams response from Hugging Face Serverless Inference API.
-    Works with or without a token (rate-limited without token).
-    """
-    url = f"https://api-inference.huggingface.co/models/{model_name}/v1/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if hf_token:
-        headers["Authorization"] = f"Bearer {hf_token}"
-    
-    formatted_messages = []
+    formatted_messages = [{"role": "system", "content": "You are a helpful, friendly, and concise AI assistant."}]
     for msg in messages:
-        formatted_messages.append({
-            "role": msg["role"],
-            "content": msg["content"]
-        })
-        
+        formatted_messages.append({"role": msg["role"], "content": msg["content"]})
+
     payload = {
         "model": model_name,
         "messages": formatted_messages,
         "temperature": temperature,
-        "max_tokens": 1024,
+        "max_tokens": 2048,
         "stream": True
     }
-    
+
     try:
         response = requests.post(url, headers=headers, json=payload, stream=True, timeout=30.0)
         if response.status_code == 401:
-            yield "Error: Hugging Face API requires authentication. Please provide a valid HF token."
+            yield "Error: Invalid Groq API key. Please check your key."
             return
-        if response.status_code == 503:
-            yield "Error: Model is loading, please try again in a moment."
+        if response.status_code == 429:
+            yield "Error: Rate limit reached. Please wait a moment and try again."
             return
         if response.status_code != 200:
-            yield f"Error: Hugging Face API returned status {response.status_code}."
+            yield f"Error: Groq API returned status {response.status_code}."
             return
-            
+
         for line in response.iter_lines(decode_unicode=True):
             if line:
                 if line.startswith("data: "):
@@ -100,37 +55,29 @@ def stream_huggingface(model_name, messages, temperature, hf_token=""):
                     except Exception:
                         pass
     except Exception as e:
-        yield f"Connection Error: Failed to communicate with Hugging Face API. {str(e)}"
+        yield f"Connection Error: {str(e)}"
+
 
 def stream_gemini(api_key, model_name, messages, temperature):
     """
-    Streams response from Gemini API using requests and a custom bracket-matching JSON parser.
+    Streams response from Gemini API (backup option).
     """
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:streamGenerateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
-    
-    # Map roles from Streamlit/Ollama ("user", "assistant") to Gemini ("user", "model")
+
     contents = []
     for msg in messages:
         role = "user" if msg["role"] == "user" else "model"
-        contents.append({
-            "role": role,
-            "parts": [{"text": msg["content"]}]
-        })
-        
-    payload = {
-        "contents": contents,
-        "generationConfig": {
-            "temperature": temperature
-        }
-    }
-    
+        contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+
+    payload = {"contents": contents, "generationConfig": {"temperature": temperature}}
+
     try:
-        response = requests.post(url, headers=headers, json=payload, stream=True, timeout=10.0)
+        response = requests.post(url, headers=headers, json=payload, stream=True, timeout=30.0)
         if response.status_code != 200:
-            yield f"Error: Gemini API returned status code {response.status_code}. Detail: {response.text}"
+            yield f"Error: Gemini API returned status {response.status_code}."
             return
-            
+
         buffer = ""
         for chunk in response.iter_content(chunk_size=1024, decode_unicode=True):
             if chunk:
@@ -144,10 +91,10 @@ def stream_gemini(api_key, model_name, messages, temperature):
                     elif buffer.startswith(']'):
                         buffer = buffer[1:].strip()
                         break
-                        
+
                     if not buffer:
                         break
-                        
+
                     try:
                         bracket_count = 0
                         in_string = False
@@ -171,31 +118,29 @@ def stream_gemini(api_key, model_name, messages, temperature):
                                     if bracket_count == 0:
                                         end_idx = idx
                                         break
-                                        
+
                         if end_idx != -1:
                             obj_str = buffer[:end_idx + 1]
                             buffer = buffer[end_idx + 1:].strip()
                             obj = json.loads(obj_str)
-                            
                             candidates = obj.get("candidates", [])
                             if candidates:
-                                content = candidates[0].get("content", {})
-                                parts = content.get("parts", [])
+                                parts = candidates[0].get("content", {}).get("parts", [])
                                 if parts:
-                                    text = parts[0].get("text", "")
-                                    yield text
+                                    yield parts[0].get("text", "")
                         else:
                             break
                     except Exception:
                         break
     except Exception as e:
-        yield f"Connection Error: Failed to communicate with Gemini API. {str(e)}"
+        yield f"Connection Error: {str(e)}"
+
 
 # ─────────────────────────────────────────────
 #  Page Configuration
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="LLM Chat Interface | Ollama",
+    page_title="AI Chat Assistant | Farhan Mustafa",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -221,7 +166,6 @@ st.markdown("""
     h1 { color: #58a6ff !important; text-shadow: 0 0 30px rgba(88,166,255,0.3); }
     h2, h3, h4 { color: #79c0ff !important; }
 
-    /* Chat messages thread */
     .chat-bubble-user {
         background: rgba(56, 139, 253, 0.15) !important;
         border: 1px solid #388bfd !important;
@@ -240,7 +184,6 @@ st.markdown("""
         color: #e6edf3;
     }
 
-    /* Text area input box */
     .stTextArea textarea {
         background: rgba(22, 27, 34, 0.95) !important;
         border: 2px solid #388bfd !important;
@@ -255,7 +198,6 @@ st.markdown("""
         box-shadow: 0 0 0 4px rgba(88,166,255,0.2) !important;
     }
 
-    /* Response display box */
     .response-box {
         background: rgba(22, 27, 34, 0.9);
         border: 1px solid #2ea043;
@@ -269,7 +211,6 @@ st.markdown("""
         line-height: 1.8;
     }
 
-    /* Send button */
     .send-btn button {
         background: linear-gradient(135deg, #238636, #2ea043) !important;
         color: white !important;
@@ -281,7 +222,6 @@ st.markdown("""
         transition: all 0.3s ease !important;
     }
 
-    /* Status badges */
     .status-connected {
         display: inline-block;
         background: rgba(46,160,67,0.15);
@@ -303,7 +243,6 @@ st.markdown("""
         font-weight: 500;
     }
 
-    /* History items */
     .hist-user {
         background: rgba(56,139,253,0.08);
         border-left: 3px solid #388bfd;
@@ -326,52 +265,44 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
+#  Load API Keys from Streamlit Secrets / Env
+# ─────────────────────────────────────────────
+def get_secret(key, default=""):
+    try:
+        return st.secrets.get(key, "") or os.environ.get(key, default)
+    except Exception:
+        return os.environ.get(key, default)
+
+GROQ_API_KEY = get_secret("GROQ_API_KEY")
+GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
+
+# ─────────────────────────────────────────────
 #  Session State Initialization
 # ─────────────────────────────────────────────
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "last_response" not in st.session_state:
     st.session_state.last_response = ""
-if "ollama_host_config" not in st.session_state:
-    st.session_state.ollama_host_config = "http://127.0.0.1:11434"
-if "backend_type" not in st.session_state:
-    st.session_state.backend_type = "Free Cloud LLM (No Key)"
-
-# Retrieve default Gemini API key from environment/secrets
-default_gemini_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY") or ""
-if "gemini_api_key" not in st.session_state:
-    st.session_state.gemini_api_key = default_gemini_key
-
-# ─────────────────────────────────────────────
-#  Ollama Connection Check (Only run if Ollama backend is selected)
-# ─────────────────────────────────────────────
-OLLAMA_HOST = st.session_state.ollama_host_config.strip()
-client = OllamaClient(host=OLLAMA_HOST) if OLLAMA_AVAILABLE else None
-
-is_connected = False
-available_models = []
-
-if st.session_state.backend_type == "Local Ollama" and OLLAMA_AVAILABLE:
-    try:
-        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=1.5)
-        if r.status_code == 200:
-            is_connected = True
-            available_models = [m['name'] for m in r.json().get('models', [])]
-    except Exception:
-        is_connected = False
+if "selected_backend" not in st.session_state:
+    # Auto-select best available backend
+    if GROQ_API_KEY:
+        st.session_state.selected_backend = "Groq (Free & Fast)"
+    elif GEMINI_API_KEY:
+        st.session_state.selected_backend = "Google Gemini"
+    else:
+        st.session_state.selected_backend = "Groq (Free & Fast)"
 
 # ─────────────────────────────────────────────
-#  SIDEBAR — Author Title + History Panel + Reset
+#  SIDEBAR
 # ─────────────────────────────────────────────
 with st.sidebar:
     st.markdown("<h3 style='text-align: center; color: #58a6ff; letter-spacing: 1px; font-weight: bold;'>CREATED BY FARHAN MUSTAFA</h3>", unsafe_allow_html=True)
     st.divider()
-    
+
     st.markdown("## Conversation History")
     st.caption("Past queries and model responses")
     st.divider()
 
-    # History Display
     if st.session_state.messages:
         for msg in st.session_state.messages:
             preview = msg["content"][:60] + ("..." if len(msg["content"]) > 60 else "")
@@ -384,8 +315,7 @@ with st.sidebar:
 
     st.divider()
 
-    # Reset Button
-    if st.button("Reset Conversation", use_container_width=True, type="primary"):
+    if st.button("🗑️ Reset Conversation", use_container_width=True, type="primary"):
         st.session_state.messages = []
         st.session_state.last_response = ""
         st.toast("Chat history cleared!")
@@ -393,95 +323,68 @@ with st.sidebar:
 
     st.divider()
 
-    # Connection Status & Configuration
-    st.markdown("**Connection & Backend Config**")
-    
-    # Backend Type Selector
+    # ── Backend Config ──
+    st.markdown("**⚙️ Backend Settings**")
+
     backend_type = st.selectbox(
-        "Select Backend:",
-        options=["Free Cloud LLM (No Key)", "Cloud Gemini API", "Local Ollama"],
-        key="backend_type"
+        "Select AI Backend:",
+        options=["Groq (Free & Fast)", "Google Gemini"],
+        key="selected_backend"
     )
-    
-    if backend_type == "Local Ollama":
-        # Text input to dynamically modify host URL
-        new_host = st.text_input(
-            "Ollama Host URL:",
-            key="ollama_host_config",
-            placeholder="e.g. http://127.0.0.1:11434"
-        )
-        
-        if is_connected:
-            st.markdown('<span class="status-connected">Connected</span>', unsafe_allow_html=True)
-            st.caption(f"Connected to backend: `{OLLAMA_HOST}`")
-        else:
-            st.markdown('<span class="status-disconnected">Disconnected</span>', unsafe_allow_html=True)
-            st.warning("Ollama server not detected. Use ngrok to expose your local port, or switch to 'Free Cloud LLM'.")
-            st.info("**Tip:** Run `ngrok http 11434` locally, then paste the HTTPS ngrok URL above.")
-            
-            if st.button("Retry Connection", use_container_width=True):
-                st.rerun()
-                
-        # Model Settings
-        st.divider()
-        st.markdown("**Settings**")
-        if is_connected and available_models:
-            selected_model = st.selectbox("Select Model", options=available_models, index=0)
-        else:
-            selected_model = st.selectbox("Select Model", options=["qwen2.5:0.5b"], index=0)
-        temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.05)
-        
-    elif backend_type == "Cloud Gemini API":
-        gemini_key_input = st.text_input(
-            "Gemini API Key:",
+
+    if backend_type == "Groq (Free & Fast)":
+        # Allow override via sidebar (uses secret by default)
+        custom_key = st.text_input(
+            "Groq API Key (auto-loaded):",
             type="password",
-            key="gemini_api_key",
-            placeholder="AIzaSy..."
+            placeholder="Auto-loaded from secrets...",
+            value="",
+            help="Leave blank to use the pre-configured key from Streamlit secrets."
         )
-        
-        if gemini_key_input:
-            st.markdown('<span class="status-connected">Key Provided ✓</span>', unsafe_allow_html=True)
+        active_groq_key = custom_key.strip() if custom_key.strip() else GROQ_API_KEY
+
+        if active_groq_key:
+            st.markdown('<span class="status-connected">✅ Ready — Groq Connected</span>', unsafe_allow_html=True)
         else:
-            st.markdown('<span class="status-disconnected">Key Missing</span>', unsafe_allow_html=True)
-            st.info("Get a FREE Gemini API Key from [Google AI Studio](https://aistudio.google.com/app/apikey) and paste it above, or set `GEMINI_API_KEY` in your Streamlit Cloud secrets.")
-            
-        # Model Settings
+            st.markdown('<span class="status-disconnected">❌ No Groq Key Found</span>', unsafe_allow_html=True)
+            st.warning("Add GROQ_API_KEY to your Streamlit secrets or enter it above.")
+
         st.divider()
-        st.markdown("**Settings**")
-        selected_gemini_model = st.selectbox(
-            "Select Model",
-            options=["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"],
-            index=0
+        st.markdown("**Model Settings**")
+        selected_model = st.selectbox(
+            "Model:",
+            options=[
+                "llama-3.3-70b-versatile",
+                "llama-3.1-8b-instant",
+                "mixtral-8x7b-32768",
+                "gemma2-9b-it",
+            ],
+            index=0,
+            help="llama-3.3-70b is the most capable; llama-3.1-8b-instant is fastest."
         )
         temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.05)
-        
-    else:  # Free Cloud LLM (No Key)
-        # Check for optional HF token from secrets
-        hf_token = ""
-        try:
-            hf_token = st.secrets.get("HF_TOKEN", "") or os.environ.get("HF_TOKEN", "")
-        except Exception:
-            pass
-        
-        if hf_token:
-            st.markdown('<span class="status-connected">Active (Token Set) ✓</span>', unsafe_allow_html=True)
-            st.caption("Using Hugging Face API with authentication token")
+
+    else:  # Google Gemini
+        custom_gemini = st.text_input(
+            "Gemini API Key (auto-loaded):",
+            type="password",
+            placeholder="Auto-loaded from secrets...",
+            value="",
+            help="Leave blank to use the pre-configured key."
+        )
+        active_gemini_key = custom_gemini.strip() if custom_gemini.strip() else GEMINI_API_KEY
+
+        if active_gemini_key:
+            st.markdown('<span class="status-connected">✅ Ready — Gemini Connected</span>', unsafe_allow_html=True)
         else:
-            st.markdown('<span class="status-connected">Active (No Key)</span>', unsafe_allow_html=True)
-            st.caption("Using Hugging Face Free Serverless API")
-        st.info("Runs free via Hugging Face hosted models. Optionally add `HF_TOKEN` in Streamlit secrets for faster responses.")
-        
-        # Model Settings
+            st.markdown('<span class="status-disconnected">❌ No Gemini Key Found</span>', unsafe_allow_html=True)
+            st.info("Get a free key at [Google AI Studio](https://aistudio.google.com/app/apikey) and add it to Streamlit secrets as `GEMINI_API_KEY`.")
+
         st.divider()
-        st.markdown("**Settings**")
-        selected_hf_model = st.selectbox(
-            "Select Model",
-            options=[
-                "Qwen/Qwen2.5-7B-Instruct",
-                "Qwen/Qwen2.5-1.5B-Instruct",
-                "microsoft/Phi-3-mini-4k-instruct",
-                "meta-llama/Llama-3.2-1B-Instruct",
-            ],
+        st.markdown("**Model Settings**")
+        selected_model = st.selectbox(
+            "Model:",
+            options=["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"],
             index=0
         )
         temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.05)
@@ -489,42 +392,37 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 #  MAIN AREA
 # ─────────────────────────────────────────────
-st.markdown("# Local LLM Chat Application")
-st.caption("Seamless communication between Streamlit frontend and local Ollama backend.")
+st.markdown("# 🤖 AI Chat Assistant")
+st.caption("Powered by Groq (Llama 3.3) · Created by FARHAN MUSTAFA")
 st.divider()
 
 # ─────────────────────────────────────────────
-#  TEXT INPUT BOX (User Query)
+#  INPUT BOX
 # ─────────────────────────────────────────────
-st.markdown("### [ASK ME ]")
+st.markdown("### [ ASK ME ]")
 
-# Form to hold the text area and send button
 with st.form(key="chat_form", clear_on_submit=True):
     user_query = st.text_area(
         label="Ask anything:",
-        placeholder="Type your question here and click Send...",
+        placeholder="Type your question here and press Send...",
         height=120,
         key="query_input",
         label_visibility="collapsed"
     )
-    
     col_submit, col_info = st.columns([1, 4])
     with col_submit:
-        submitted = st.form_submit_button("Send Query", use_container_width=True)
+        submitted = st.form_submit_button("🚀 Send", use_container_width=True)
     with col_info:
-        st.caption("Press button to send your query to the local LLM.")
+        st.caption(f"Connected to: **{backend_type}** · Model: `{selected_model}`")
 
 st.divider()
 
 # ─────────────────────────────────────────────
-#  RESPONSE AREA (Shows current or last output)
+#  RESPONSE AREA
 # ─────────────────────────────────────────────
-st.markdown("### Response Area")
-
-# We create a placeholder where the response will be streamed
+st.markdown("### 💬 Response")
 response_placeholder = st.empty()
 
-# Show default or last message
 if st.session_state.last_response:
     response_placeholder.markdown(
         f'<div class="response-box">{st.session_state.last_response}</div>',
@@ -539,168 +437,101 @@ else:
 st.divider()
 
 # ─────────────────────────────────────────────
-#  API Connection and Message Processing
+#  QUERY PROCESSING
 # ─────────────────────────────────────────────
 if submitted and user_query.strip():
-    if backend_type == "Local Ollama":
-        if not is_connected:
-            st.error("Cannot communicate with the LLM backend. Please make sure Ollama server is running locally on port 11434.")
+    st.session_state.messages.append({"role": "user", "content": user_query.strip()})
+
+    full_response = ""
+
+    if backend_type == "Groq (Free & Fast)":
+        if not active_groq_key:
+            st.error("❌ No Groq API key found. Please add GROQ_API_KEY to your Streamlit secrets.")
+            st.session_state.messages.pop()
         else:
-            # Add user query to conversation history
-            st.session_state.messages.append({"role": "user", "content": user_query.strip()})
-
-            # Build context from previous messages
-            api_messages = [{"role": "system", "content": "You are a helpful, friendly, and concise AI assistant."}]
-            for msg in st.session_state.messages:
-                api_messages.append({"role": msg["role"], "content": msg["content"]})
-
-            # Stream the response from backend
-            full_response = ""
             try:
-                with st.spinner("LLM is thinking..."):
-                    stream = client.chat(
-                        model=selected_model,
-                        messages=api_messages,
-                        options={"temperature": temperature},
-                        stream=True
-                    )
-                    for chunk in stream:
-                        token = chunk.get("message", {}).get("content", "")
-                        full_response += token
-                        response_placeholder.markdown(
-                            f'<div class="response-box">{full_response}|</div>',
-                            unsafe_allow_html=True
-                        )
-                
-                # Final output formatting
-                response_placeholder.markdown(
-                    f'<div class="response-box">{full_response}</div>',
-                    unsafe_allow_html=True
-                )
-                
-                # Save assistant response
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
-                st.session_state.last_response = full_response
-                st.rerun()
-
-            except Exception as e:
-                st.error(f"Error communicating with LLM backend: {e}")
-
-    elif backend_type == "Cloud Gemini API":
-        if not st.session_state.gemini_api_key.strip():
-            st.error("Please enter a valid Gemini API Key in the sidebar to send queries.")
-        else:
-            # Add user query to conversation history
-            st.session_state.messages.append({"role": "user", "content": user_query.strip()})
-
-            # Stream the response from Gemini
-            full_response = ""
-            try:
-                with st.spinner("Gemini is thinking..."):
-                    stream = stream_gemini(
-                        api_key=st.session_state.gemini_api_key.strip(),
-                        model_name=selected_gemini_model,
+                with st.spinner("⚡ Groq AI is thinking..."):
+                    stream = stream_groq(
+                        api_key=active_groq_key,
+                        model_name=selected_model,
                         messages=st.session_state.messages,
                         temperature=temperature
                     )
-                    
+
                     has_error = False
                     for token in stream:
                         if token.startswith("Error:") or token.startswith("Connection Error:"):
                             has_error = True
+                            st.error(f"⚠️ {token}")
                             break
                         full_response += token
                         response_placeholder.markdown(
-                            f'<div class="response-box">{full_response}|</div>',
+                            f'<div class="response-box">{full_response}▌</div>',
                             unsafe_allow_html=True
                         )
-                    
-                    if has_error:
-                        st.toast("Gemini API connection failed. Running in offline fallback mode...", icon="ℹ️")
-                        full_response = get_offline_response(user_query.strip())
 
-                # Final output formatting
-                response_placeholder.markdown(
-                    f'<div class="response-box">{full_response}</div>',
-                    unsafe_allow_html=True
-                )
-
-                # Save assistant response
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
-                st.session_state.last_response = full_response
-                st.rerun()
-
-            except Exception as e:
-                st.toast("Gemini API connection failed. Running in offline fallback mode...", icon="ℹ️")
-                full_response = get_offline_response(user_query.strip())
-                response_placeholder.markdown(
-                    f'<div class="response-box">{full_response}</div>',
-                    unsafe_allow_html=True
-                )
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
-                st.session_state.last_response = full_response
-                st.rerun()
-
-    else:  # Free Cloud LLM (No Key)
-        # Add user query to conversation history
-        st.session_state.messages.append({"role": "user", "content": user_query.strip()})
-
-        # Stream the response from Hugging Face
-        full_response = ""
-        try:
-            with st.spinner("🤖 AI is thinking..."):
-                stream = stream_huggingface(
-                    model_name=selected_hf_model,
-                    messages=st.session_state.messages,
-                    temperature=temperature,
-                    hf_token=hf_token
-                )
-                
-                has_error = False
-                error_msg = ""
-                for token in stream:
-                    if token.startswith("Error:") or token.startswith("Connection Error:"):
-                        has_error = True
-                        error_msg = token
-                        break
-                    full_response += token
+                if not has_error and full_response:
                     response_placeholder.markdown(
-                        f'<div class="response-box">{full_response}▌</div>',
+                        f'<div class="response-box">{full_response}</div>',
                         unsafe_allow_html=True
                     )
-                
-                if has_error:
-                    st.toast("Cloud API unreachable — using smart fallback mode.", icon="ℹ️")
-                    full_response = get_offline_response(user_query.strip())
+                    st.session_state.messages.append({"role": "assistant", "content": full_response})
+                    st.session_state.last_response = full_response
+                    st.rerun()
+                elif has_error:
+                    st.session_state.messages.pop()
 
-            # Final output formatting
-            response_placeholder.markdown(
-                f'<div class="response-box">{full_response}</div>',
-                unsafe_allow_html=True
-            )
+            except Exception as e:
+                st.error(f"❌ Unexpected error: {e}")
+                st.session_state.messages.pop()
 
-            # Save assistant response
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-            st.session_state.last_response = full_response
-            st.rerun()
+    else:  # Google Gemini
+        if not active_gemini_key:
+            st.error("❌ No Gemini API key found. Please add GEMINI_API_KEY to your Streamlit secrets.")
+            st.session_state.messages.pop()
+        else:
+            try:
+                with st.spinner("🧠 Gemini is thinking..."):
+                    stream = stream_gemini(
+                        api_key=active_gemini_key,
+                        model_name=selected_model,
+                        messages=st.session_state.messages,
+                        temperature=temperature
+                    )
 
-        except Exception as e:
-            st.toast("Cloud connection failed — using smart fallback mode.", icon="ℹ️")
-            full_response = get_offline_response(user_query.strip())
-            response_placeholder.markdown(
-                f'<div class="response-box">{full_response}</div>',
-                unsafe_allow_html=True
-            )
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-            st.session_state.last_response = full_response
-            st.rerun()
+                    has_error = False
+                    for token in stream:
+                        if token.startswith("Error:") or token.startswith("Connection Error:"):
+                            has_error = True
+                            st.error(f"⚠️ {token}")
+                            break
+                        full_response += token
+                        response_placeholder.markdown(
+                            f'<div class="response-box">{full_response}▌</div>',
+                            unsafe_allow_html=True
+                        )
+
+                if not has_error and full_response:
+                    response_placeholder.markdown(
+                        f'<div class="response-box">{full_response}</div>',
+                        unsafe_allow_html=True
+                    )
+                    st.session_state.messages.append({"role": "assistant", "content": full_response})
+                    st.session_state.last_response = full_response
+                    st.rerun()
+                elif has_error:
+                    st.session_state.messages.pop()
+
+            except Exception as e:
+                st.error(f"❌ Unexpected error: {e}")
+                st.session_state.messages.pop()
 
 
 # ─────────────────────────────────────────────
-#  CONVERSATION HISTORY THREAD (Full back-and-forth)
+#  CONVERSATION THREAD
 # ─────────────────────────────────────────────
 if st.session_state.messages:
-    st.markdown("### Conversation Thread")
+    st.markdown("### 📜 Conversation Thread")
     for msg in st.session_state.messages:
         if msg["role"] == "user":
             st.markdown(f'<div class="chat-bubble-user"><b>You:</b> {msg["content"]}</div>', unsafe_allow_html=True)
@@ -709,4 +540,4 @@ if st.session_state.messages:
 
 # Footer
 st.divider()
-st.caption("100% Local & Private | Streamlit + Ollama Integration")
+st.caption("🔒 Powered by Groq (Llama 3.3 70B) · 100% Cloud · Created by FARHAN MUSTAFA")
