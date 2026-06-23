@@ -467,7 +467,19 @@ if submitted and user_query.strip():
 
     if backend_type == "Free Cloud LLM (Groq)":
         if not active_groq_key:
-            st.error("Cannot communicate with the LLM backend. Please add GROQ_API_KEY to your Streamlit secrets.")
+            st.markdown("""
+            <div style="background:rgba(22,27,34,0.9);border:1px solid #388bfd;border-left:4px solid #388bfd;
+            border-radius:12px;padding:24px;margin:12px 0;color:#e6edf3;font-size:15px;line-height:1.9">
+            <b style="color:#58a6ff;font-size:18px;">⚙️ One-Time Setup Required</b><br><br>
+            To activate the AI, you need a <b>free Groq API key</b> (no credit card, takes 2 minutes):<br><br>
+            <b>Step 1:</b> Go to 👉 <a href="https://console.groq.com" target="_blank" style="color:#58a6ff">console.groq.com</a> and sign up free<br>
+            <b>Step 2:</b> Click <b>API Keys</b> → <b>Create API Key</b> → Copy it<br>
+            <b>Step 3:</b> In your Streamlit app → <b>Settings → Secrets</b> → paste:<br><br>
+            <code style="background:#161b22;padding:8px 14px;border-radius:6px;display:inline-block;
+            border:1px solid #30363d;">GROQ_API_KEY = "gsk_your_key_here"</code><br><br>
+            <b>Step 4:</b> Click <b>Save</b> → app will restart and work instantly ✅
+            </div>
+            """, unsafe_allow_html=True)
         else:
             # Add user query to conversation history
             st.session_state.messages.append({"role": "user", "content": user_query.strip()})
