@@ -7,7 +7,6 @@ from ollama import Client
 # ─────────────────────────────────────────────
 st.set_page_config(
     page_title="LLM Chat Interface | Ollama",
-    page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -166,10 +165,13 @@ except Exception:
     is_connected = False
 
 # ─────────────────────────────────────────────
-#  SIDEBAR — History Panel + Reset
+#  SIDEBAR — Author Title + History Panel + Reset
 # ─────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 📜 Conversation History")
+    st.markdown("<h3 style='text-align: center; color: #58a6ff; letter-spacing: 1px; font-weight: bold;'>CREATED BY FARHAN MUSTAFA</h3>", unsafe_allow_html=True)
+    st.divider()
+    
+    st.markdown("## Conversation History")
     st.caption("Past queries and model responses")
     st.divider()
 
@@ -178,25 +180,25 @@ with st.sidebar:
         for msg in st.session_state.messages:
             preview = msg["content"][:60] + ("..." if len(msg["content"]) > 60 else "")
             if msg["role"] == "user":
-                st.markdown(f'<div class="hist-user">🧑 <b>You:</b> {preview}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="hist-user"><b>You:</b> {preview}</div>', unsafe_allow_html=True)
             else:
-                st.markdown(f'<div class="hist-ai">🤖 <b>AI:</b> {preview}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="hist-ai"><b>AI:</b> {preview}</div>', unsafe_allow_html=True)
     else:
-        st.info("No conversation history yet.", icon="💬")
+        st.info("No conversation history yet.")
 
     st.divider()
 
     # Reset Button
-    if st.button("🗑️ Reset Conversation", use_container_width=True, type="primary"):
+    if st.button("Reset Conversation", use_container_width=True, type="primary"):
         st.session_state.messages = []
         st.session_state.last_response = ""
-        st.toast("✅ Chat history cleared!", icon="🧹")
+        st.toast("Chat history cleared!")
         st.rerun()
 
     st.divider()
 
     # Connection Status & Configuration
-    st.markdown("**🔌 Connection & Backend Config**")
+    st.markdown("**Connection & Backend Config**")
     
     # Text input to dynamically modify host URL (supports localhost or public tunnel/ngrok URLs)
     new_host = st.text_input(
@@ -206,20 +208,20 @@ with st.sidebar:
     )
     
     if is_connected:
-        st.markdown('<span class="status-connected">🟢 Connected</span>', unsafe_allow_html=True)
+        st.markdown('<span class="status-connected">Connected</span>', unsafe_allow_html=True)
         st.caption(f"Connected to backend: `{OLLAMA_HOST}`")
     else:
-        st.markdown('<span class="status-disconnected">🔴 Disconnected</span>', unsafe_allow_html=True)
+        st.markdown('<span class="status-disconnected">Disconnected</span>', unsafe_allow_html=True)
         st.warning("Cannot communicate with the LLM backend. Please make sure Ollama server is running locally on port 11434.")
-        st.info("💡 **Streamlit Cloud Note:** If you are running this app on Streamlit Cloud, you must expose your local Ollama port (11434) using a tunnel (e.g. `ngrok http 11434`) and paste the ngrok URL above.")
+        st.info("**Streamlit Cloud Note:** If you are running this app on Streamlit Cloud, you must expose your local Ollama port (11434) using a tunnel (e.g. `ngrok http 11434`) and paste the ngrok URL above.")
         
-        if st.button("🔄 Retry Connection", use_container_width=True):
+        if st.button("Retry Connection", use_container_width=True):
             st.rerun()
 
     # Model Settings
     if is_connected and available_models:
         st.divider()
-        st.markdown("**⚙️ Settings**")
+        st.markdown("**Settings**")
         selected_model = st.selectbox("Select Model", options=available_models, index=0)
         temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.05)
     else:
@@ -229,14 +231,14 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 #  MAIN AREA
 # ─────────────────────────────────────────────
-st.markdown("# 🤖 Local LLM Chat Application")
+st.markdown("# Local LLM Chat Application")
 st.caption("Seamless communication between Streamlit frontend and local Ollama backend.")
 st.divider()
 
 # ─────────────────────────────────────────────
 #  TEXT INPUT BOX (User Query)
 # ─────────────────────────────────────────────
-st.markdown("### ✏️ Text Input Box")
+st.markdown("### Text Input Box")
 
 # Form to hold the text area and send button
 with st.form(key="chat_form", clear_on_submit=True):
@@ -250,7 +252,7 @@ with st.form(key="chat_form", clear_on_submit=True):
     
     col_submit, col_info = st.columns([1, 4])
     with col_submit:
-        submitted = st.form_submit_button("🚀 Send Query", use_container_width=True)
+        submitted = st.form_submit_button("Send Query", use_container_width=True)
     with col_info:
         st.caption("Press button to send your query to the local LLM.")
 
@@ -259,7 +261,7 @@ st.divider()
 # ─────────────────────────────────────────────
 #  RESPONSE AREA (Shows current or last output)
 # ─────────────────────────────────────────────
-st.markdown("### 💬 Response Area")
+st.markdown("### Response Area")
 
 # We create a placeholder where the response will be streamed
 response_placeholder = st.empty()
@@ -283,7 +285,7 @@ st.divider()
 # ─────────────────────────────────────────────
 if submitted and user_query.strip():
     if not is_connected:
-        st.error("❌ Cannot communicate with the LLM backend. Please make sure Ollama server is running locally on port 11434.")
+        st.error("Cannot communicate with the LLM backend. Please make sure Ollama server is running locally on port 11434.")
     else:
         # Add user query to conversation history
         st.session_state.messages.append({"role": "user", "content": user_query.strip()})
@@ -296,7 +298,7 @@ if submitted and user_query.strip():
         # Stream the response from backend
         full_response = ""
         try:
-            with st.spinner("⏳ LLM is thinking..."):
+            with st.spinner("LLM is thinking..."):
                 stream = client.chat(
                     model=selected_model,
                     messages=api_messages,
@@ -307,7 +309,7 @@ if submitted and user_query.strip():
                     token = chunk.get("message", {}).get("content", "")
                     full_response += token
                     response_placeholder.markdown(
-                        f'<div class="response-box">{full_response}▌</div>',
+                        f'<div class="response-box">{full_response}|</div>',
                         unsafe_allow_html=True
                     )
             
@@ -325,19 +327,19 @@ if submitted and user_query.strip():
             st.rerun()
 
         except Exception as e:
-            st.error(f"❌ Error communicating with LLM backend: {e}")
+            st.error(f"Error communicating with LLM backend: {e}")
 
 # ─────────────────────────────────────────────
 #  CONVERSATION HISTORY THREAD (Full back-and-forth)
 # ─────────────────────────────────────────────
 if st.session_state.messages:
-    st.markdown("### 📋 Conversation Thread")
+    st.markdown("### Conversation Thread")
     for msg in st.session_state.messages:
         if msg["role"] == "user":
-            st.markdown(f'<div class="chat-bubble-user">🧑 <b>You:</b> {msg["content"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="chat-bubble-user"><b>You:</b> {msg["content"]}</div>', unsafe_allow_html=True)
         else:
-            st.markdown(f'<div class="chat-bubble-ai">🤖 <b>AI:</b> {msg["content"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="chat-bubble-ai"><b>AI:</b> {msg["content"]}</div>', unsafe_allow_html=True)
 
 # Footer
 st.divider()
-st.caption("🔒 100% Local & Private | Streamlit + Ollama Integration")
+st.caption("100% Local & Private | Streamlit + Ollama Integration")
