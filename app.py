@@ -7,6 +7,41 @@ from ollama import Client
 # ─────────────────────────────────────────────
 #  Helper Functions for Cloud Integrations
 # ─────────────────────────────────────────────
+def get_offline_response(query):
+    query_lower = query.lower()
+    
+    if "code" in query_lower or "python" in query_lower or "html" in query_lower or "program" in query_lower:
+        return (
+            "Here is a sample Python script for your query:\n\n"
+            "```python\n"
+            "def greet(name):\n"
+            "    return f\"Hello, {name}! Welcome to the Offline Mode.\"\n\n"
+            "print(greet(\"Farhan Mustafa\"))\n"
+            "```\n\n"
+            "(Running in offline/local fallback mode because the cloud API is unreachable. Please check your internet connection.)"
+        )
+    elif any(word in query_lower for word in ["hello", "hi", "hey", "greet"]):
+        return (
+            "Hello! I am your AI assistant running in offline fallback mode. "
+            "How can I help you today? (Please note: Internet connection to cloud LLM is currently offline.)"
+        )
+    elif "farhan" in query_lower or "mustafa" in query_lower or "creator" in query_lower:
+        return (
+            "This application was created by FARHAN MUSTAFA. "
+            "It supports both offline simulation, local Ollama backend, and cloud APIs."
+        )
+    elif "streamlit" in query_lower or "github" in query_lower or "cloud" in query_lower:
+        return (
+            "Streamlit is connected directly to your GitHub repository. "
+            "To use full AI features, make sure your Streamlit deployment has internet access and can resolve cloud APIs."
+        )
+    else:
+        return (
+            f"Thank you for your query: \"{query}\".\n\n"
+            "Currently, the cloud LLM backend is unreachable (DNS/Network failed). "
+            "I am running in offline simulation mode to prevent errors. Once internet connectivity is restored, I will connect back to the live LLM!"
+        )
+
 def stream_huggingface(model_name, messages, temperature):
     """
     Streams response from Hugging Face Serverless Inference API without requiring an API key.
@@ -534,12 +569,21 @@ if submitted and user_query.strip():
                         messages=st.session_state.messages,
                         temperature=temperature
                     )
+                    
+                    has_error = False
                     for token in stream:
+                        if token.startswith("Error:") or token.startswith("Connection Error:"):
+                            has_error = True
+                            break
                         full_response += token
                         response_placeholder.markdown(
                             f'<div class="response-box">{full_response}|</div>',
                             unsafe_allow_html=True
                         )
+                    
+                    if has_error:
+                        st.toast("Gemini API connection failed. Running in offline fallback mode...", icon="ℹ️")
+                        full_response = get_offline_response(user_query.strip())
 
                 # Final output formatting
                 response_placeholder.markdown(
@@ -553,7 +597,15 @@ if submitted and user_query.strip():
                 st.rerun()
 
             except Exception as e:
-                st.error(f"Error communicating with Gemini API: {e}")
+                st.toast("Gemini API connection failed. Running in offline fallback mode...", icon="ℹ️")
+                full_response = get_offline_response(user_query.strip())
+                response_placeholder.markdown(
+                    f'<div class="response-box">{full_response}</div>',
+                    unsafe_allow_html=True
+                )
+                st.session_state.messages.append({"role": "assistant", "content": full_response})
+                st.session_state.last_response = full_response
+                st.rerun()
 
     else:  # Free Cloud LLM (No Key)
         # Add user query to conversation history
@@ -568,12 +620,21 @@ if submitted and user_query.strip():
                     messages=st.session_state.messages,
                     temperature=temperature
                 )
+                
+                has_error = False
                 for token in stream:
+                    if token.startswith("Error:") or token.startswith("Connection Error:"):
+                        has_error = True
+                        break
                     full_response += token
                     response_placeholder.markdown(
                         f'<div class="response-box">{full_response}|</div>',
                         unsafe_allow_html=True
                     )
+                
+                if has_error:
+                    st.toast("Cloud connection failed. Running in offline fallback mode...", icon="ℹ️")
+                    full_response = get_offline_response(user_query.strip())
 
             # Final output formatting
             response_placeholder.markdown(
@@ -587,7 +648,15 @@ if submitted and user_query.strip():
             st.rerun()
 
         except Exception as e:
-            st.error(f"Error communicating with Hugging Face API: {e}")
+            st.toast("Cloud connection failed. Running in offline fallback mode...", icon="ℹ️")
+            full_response = get_offline_response(user_query.strip())
+            response_placeholder.markdown(
+                f'<div class="response-box">{full_response}</div>',
+                unsafe_allow_html=True
+            )
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            st.session_state.last_response = full_response
+            st.rerun()
 
 
 # ─────────────────────────────────────────────
