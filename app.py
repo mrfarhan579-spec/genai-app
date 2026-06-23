@@ -234,6 +234,29 @@ st.caption("Seamless communication between Streamlit frontend and local Ollama b
 st.divider()
 
 # ─────────────────────────────────────────────
+#  TEXT INPUT BOX (User Query)
+# ─────────────────────────────────────────────
+st.markdown("### ✏️ Text Input Box")
+
+# Form to hold the text area and send button
+with st.form(key="chat_form", clear_on_submit=True):
+    user_query = st.text_area(
+        label="Ask anything:",
+        placeholder="Type your question here and click Send...",
+        height=120,
+        key="query_input",
+        label_visibility="collapsed"
+    )
+    
+    col_submit, col_info = st.columns([1, 4])
+    with col_submit:
+        submitted = st.form_submit_button("🚀 Send Query", use_container_width=True)
+    with col_info:
+        st.caption("Press button to send your query to the local LLM.")
+
+st.divider()
+
+# ─────────────────────────────────────────────
 #  RESPONSE AREA (Shows current or last output)
 # ─────────────────────────────────────────────
 st.markdown("### 💬 Response Area")
@@ -254,27 +277,6 @@ else:
     )
 
 st.divider()
-
-# ─────────────────────────────────────────────
-#  TEXT INPUT BOX (User Query)
-# ─────────────────────────────────────────────
-st.markdown("### ✏️ Text Input Box")
-
-# Form to hold the text area and send button
-with st.form(key="chat_form", clear_on_submit=True):
-    user_query = st.text_area(
-        label="Ask anything:",
-        placeholder="Type your question here and click Send...",
-        height=120,
-        key="query_input",
-        label_visibility="collapsed"
-    )
-    
-    col_submit, col_info = st.columns([1, 4])
-    with col_submit:
-        submitted = st.form_submit_button("🚀 Send Query", use_container_width=True)
-    with col_info:
-        st.caption("Press button to send your query to the local LLM.")
 
 # ─────────────────────────────────────────────
 #  API Connection and Message Processing
