@@ -5,8 +5,50 @@ import os
 from ollama import Client
 
 # ─────────────────────────────────────────────
-#  Helper Functions for Gemini Integration
+#  Helper Functions for Cloud Integrations
 # ─────────────────────────────────────────────
+def stream_huggingface(model_name, messages, temperature):
+    """
+    Streams response from Hugging Face Serverless Inference API without requiring an API key.
+    """
+    url = f"https://api-inference.huggingface.co/models/{model_name}/v1/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    
+    formatted_messages = []
+    for msg in messages:
+        formatted_messages.append({
+            "role": msg["role"],
+            "content": msg["content"]
+        })
+        
+    payload = {
+        "model": model_name,
+        "messages": formatted_messages,
+        "temperature": temperature,
+        "stream": True
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=payload, stream=True, timeout=15.0)
+        if response.status_code != 200:
+            yield f"Error: Hugging Face API returned status {response.status_code}. Detail: {response.text}"
+            return
+            
+        for line in response.iter_lines(decode_unicode=True):
+            if line:
+                if line.startswith("data: "):
+                    data_str = line[6:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        data_obj = json.loads(data_str)
+                        token = data_obj.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                        yield token
+                    except Exception:
+                        pass
+    except Exception as e:
+        yield f"Connection Error: Failed to communicate with Hugging Face API. {str(e)}"
+
 def stream_gemini(api_key, model_name, messages, temperature):
     """
     Streams response from Gemini API using requests and a custom bracket-matching JSON parser.
@@ -240,7 +282,7 @@ if "last_response" not in st.session_state:
 if "ollama_host_config" not in st.session_state:
     st.session_state.ollama_host_config = "http://127.0.0.1:11434"
 if "backend_type" not in st.session_state:
-    st.session_state.backend_type = "Cloud Gemini API"
+    st.session_state.backend_type = "Free Cloud LLM (No Key)"
 
 # Retrieve default Gemini API key from environment/secrets
 default_gemini_key = st.secrets.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY") or ""
@@ -304,7 +346,7 @@ with st.sidebar:
     # Backend Type Selector
     backend_type = st.selectbox(
         "Select Backend:",
-        options=["Cloud Gemini API", "Local Ollama"],
+        options=["Free Cloud LLM (No Key)", "Cloud Gemini API", "Local Ollama"],
         key="backend_type"
     )
     
@@ -336,7 +378,7 @@ with st.sidebar:
             selected_model = st.selectbox("Select Model", options=["qwen2.5:0.5b"], index=0)
         temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.05)
         
-    else:  # Cloud Gemini API
+    elif backend_type == "Cloud Gemini API":
         gemini_key_input = st.text_input(
             "Gemini API Key:",
             type="password",
@@ -356,6 +398,21 @@ with st.sidebar:
         selected_gemini_model = st.selectbox(
             "Select Model",
             options=["gemini-1.5-flash", "gemini-1.5-pro"],
+            index=0
+        )
+        temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.05)
+        
+    else:  # Free Cloud LLM (No Key)
+        st.markdown('<span class="status-connected">Active (No Key)</span>', unsafe_allow_html=True)
+        st.caption("Connected to Hugging Face Free Serverless API")
+        st.info("This option runs fully free in your browser using Hugging Face hosted models. No API keys or local server needed!")
+        
+        # Model Settings
+        st.divider()
+        st.markdown("**Settings**")
+        selected_hf_model = st.selectbox(
+            "Select Model",
+            options=["Qwen/Qwen2.5-7B-Instruct", "meta-llama/Llama-3.2-1B-Instruct"],
             index=0
         )
         temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.05)
@@ -460,7 +517,7 @@ if submitted and user_query.strip():
             except Exception as e:
                 st.error(f"Error communicating with LLM backend: {e}")
 
-    else:  # Cloud Gemini API
+    elif backend_type == "Cloud Gemini API":
         if not st.session_state.gemini_api_key.strip():
             st.error("Please enter a valid Gemini API Key in the sidebar to send queries.")
         else:
@@ -497,6 +554,40 @@ if submitted and user_query.strip():
 
             except Exception as e:
                 st.error(f"Error communicating with Gemini API: {e}")
+
+    else:  # Free Cloud LLM (No Key)
+        # Add user query to conversation history
+        st.session_state.messages.append({"role": "user", "content": user_query.strip()})
+
+        # Stream the response from Hugging Face
+        full_response = ""
+        try:
+            with st.spinner("Cloud LLM is thinking..."):
+                stream = stream_huggingface(
+                    model_name=selected_hf_model,
+                    messages=st.session_state.messages,
+                    temperature=temperature
+                )
+                for token in stream:
+                    full_response += token
+                    response_placeholder.markdown(
+                        f'<div class="response-box">{full_response}|</div>',
+                        unsafe_allow_html=True
+                    )
+
+            # Final output formatting
+            response_placeholder.markdown(
+                f'<div class="response-box">{full_response}</div>',
+                unsafe_allow_html=True
+            )
+
+            # Save assistant response
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            st.session_state.last_response = full_response
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"Error communicating with Hugging Face API: {e}")
 
 
 # ─────────────────────────────────────────────
