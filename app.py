@@ -2,7 +2,14 @@ import streamlit as st
 import requests
 import json
 import os
-from ollama import Client
+
+# Safe conditional import for Ollama (not available on Streamlit Cloud)
+try:
+    from ollama import Client as OllamaClient
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
+    OllamaClient = None
 
 # ─────────────────────────────────────────────
 #  Helper Functions for Cloud Integrations
@@ -42,12 +49,15 @@ def get_offline_response(query):
             "I am running in offline simulation mode to prevent errors. Once internet connectivity is restored, I will connect back to the live LLM!"
         )
 
-def stream_huggingface(model_name, messages, temperature):
+def stream_huggingface(model_name, messages, temperature, hf_token=""):
     """
-    Streams response from Hugging Face Serverless Inference API without requiring an API key.
+    Streams response from Hugging Face Serverless Inference API.
+    Works with or without a token (rate-limited without token).
     """
     url = f"https://api-inference.huggingface.co/models/{model_name}/v1/chat/completions"
     headers = {"Content-Type": "application/json"}
+    if hf_token:
+        headers["Authorization"] = f"Bearer {hf_token}"
     
     formatted_messages = []
     for msg in messages:
@@ -60,13 +70,20 @@ def stream_huggingface(model_name, messages, temperature):
         "model": model_name,
         "messages": formatted_messages,
         "temperature": temperature,
+        "max_tokens": 1024,
         "stream": True
     }
     
     try:
-        response = requests.post(url, headers=headers, json=payload, stream=True, timeout=15.0)
+        response = requests.post(url, headers=headers, json=payload, stream=True, timeout=30.0)
+        if response.status_code == 401:
+            yield "Error: Hugging Face API requires authentication. Please provide a valid HF token."
+            return
+        if response.status_code == 503:
+            yield "Error: Model is loading, please try again in a moment."
+            return
         if response.status_code != 200:
-            yield f"Error: Hugging Face API returned status {response.status_code}. Detail: {response.text}"
+            yield f"Error: Hugging Face API returned status {response.status_code}."
             return
             
         for line in response.iter_lines(decode_unicode=True):
@@ -78,7 +95,8 @@ def stream_huggingface(model_name, messages, temperature):
                     try:
                         data_obj = json.loads(data_str)
                         token = data_obj.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                        yield token
+                        if token:
+                            yield token
                     except Exception:
                         pass
     except Exception as e:
@@ -328,12 +346,12 @@ if "gemini_api_key" not in st.session_state:
 #  Ollama Connection Check (Only run if Ollama backend is selected)
 # ─────────────────────────────────────────────
 OLLAMA_HOST = st.session_state.ollama_host_config.strip()
-client = Client(host=OLLAMA_HOST)
+client = OllamaClient(host=OLLAMA_HOST) if OLLAMA_AVAILABLE else None
 
 is_connected = False
 available_models = []
 
-if st.session_state.backend_type == "Local Ollama":
+if st.session_state.backend_type == "Local Ollama" and OLLAMA_AVAILABLE:
     try:
         r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=1.5)
         if r.status_code == 200:
@@ -398,8 +416,8 @@ with st.sidebar:
             st.caption(f"Connected to backend: `{OLLAMA_HOST}`")
         else:
             st.markdown('<span class="status-disconnected">Disconnected</span>', unsafe_allow_html=True)
-            st.warning("Cannot communicate with the LLM backend. Please make sure Ollama server is running locally on port 11434.")
-            st.info("**Streamlit Cloud Note:** If you are running this app on Streamlit Cloud, you must expose your local Ollama port (11434) using a tunnel (e.g. `ngrok http 11434`) and paste the ngrok URL above.")
+            st.warning("Ollama server not detected. Use ngrok to expose your local port, or switch to 'Free Cloud LLM'.")
+            st.info("**Tip:** Run `ngrok http 11434` locally, then paste the HTTPS ngrok URL above.")
             
             if st.button("Retry Connection", use_container_width=True):
                 st.rerun()
@@ -422,32 +440,48 @@ with st.sidebar:
         )
         
         if gemini_key_input:
-            st.markdown('<span class="status-connected">Key Provided</span>', unsafe_allow_html=True)
+            st.markdown('<span class="status-connected">Key Provided ✓</span>', unsafe_allow_html=True)
         else:
             st.markdown('<span class="status-disconnected">Key Missing</span>', unsafe_allow_html=True)
-            st.info("Get a free Gemini API Key from Google AI Studio and paste it above, or set it as a `GEMINI_API_KEY` secret in your Streamlit Cloud dashboard.")
+            st.info("Get a FREE Gemini API Key from [Google AI Studio](https://aistudio.google.com/app/apikey) and paste it above, or set `GEMINI_API_KEY` in your Streamlit Cloud secrets.")
             
         # Model Settings
         st.divider()
         st.markdown("**Settings**")
         selected_gemini_model = st.selectbox(
             "Select Model",
-            options=["gemini-1.5-flash", "gemini-1.5-pro"],
+            options=["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash"],
             index=0
         )
         temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.05)
         
     else:  # Free Cloud LLM (No Key)
-        st.markdown('<span class="status-connected">Active (No Key)</span>', unsafe_allow_html=True)
-        st.caption("Connected to Hugging Face Free Serverless API")
-        st.info("This option runs fully free in your browser using Hugging Face hosted models. No API keys or local server needed!")
+        # Check for optional HF token from secrets
+        hf_token = ""
+        try:
+            hf_token = st.secrets.get("HF_TOKEN", "") or os.environ.get("HF_TOKEN", "")
+        except Exception:
+            pass
+        
+        if hf_token:
+            st.markdown('<span class="status-connected">Active (Token Set) ✓</span>', unsafe_allow_html=True)
+            st.caption("Using Hugging Face API with authentication token")
+        else:
+            st.markdown('<span class="status-connected">Active (No Key)</span>', unsafe_allow_html=True)
+            st.caption("Using Hugging Face Free Serverless API")
+        st.info("Runs free via Hugging Face hosted models. Optionally add `HF_TOKEN` in Streamlit secrets for faster responses.")
         
         # Model Settings
         st.divider()
         st.markdown("**Settings**")
         selected_hf_model = st.selectbox(
             "Select Model",
-            options=["Qwen/Qwen2.5-7B-Instruct", "meta-llama/Llama-3.2-1B-Instruct"],
+            options=[
+                "Qwen/Qwen2.5-7B-Instruct",
+                "Qwen/Qwen2.5-1.5B-Instruct",
+                "microsoft/Phi-3-mini-4k-instruct",
+                "meta-llama/Llama-3.2-1B-Instruct",
+            ],
             index=0
         )
         temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.05)
@@ -614,26 +648,29 @@ if submitted and user_query.strip():
         # Stream the response from Hugging Face
         full_response = ""
         try:
-            with st.spinner("Cloud LLM is thinking..."):
+            with st.spinner("🤖 AI is thinking..."):
                 stream = stream_huggingface(
                     model_name=selected_hf_model,
                     messages=st.session_state.messages,
-                    temperature=temperature
+                    temperature=temperature,
+                    hf_token=hf_token
                 )
                 
                 has_error = False
+                error_msg = ""
                 for token in stream:
                     if token.startswith("Error:") or token.startswith("Connection Error:"):
                         has_error = True
+                        error_msg = token
                         break
                     full_response += token
                     response_placeholder.markdown(
-                        f'<div class="response-box">{full_response}|</div>',
+                        f'<div class="response-box">{full_response}▌</div>',
                         unsafe_allow_html=True
                     )
                 
                 if has_error:
-                    st.toast("Cloud connection failed. Running in offline fallback mode...", icon="ℹ️")
+                    st.toast("Cloud API unreachable — using smart fallback mode.", icon="ℹ️")
                     full_response = get_offline_response(user_query.strip())
 
             # Final output formatting
@@ -648,7 +685,7 @@ if submitted and user_query.strip():
             st.rerun()
 
         except Exception as e:
-            st.toast("Cloud connection failed. Running in offline fallback mode...", icon="ℹ️")
+            st.toast("Cloud connection failed — using smart fallback mode.", icon="ℹ️")
             full_response = get_offline_response(user_query.strip())
             response_placeholder.markdown(
                 f'<div class="response-box">{full_response}</div>',
